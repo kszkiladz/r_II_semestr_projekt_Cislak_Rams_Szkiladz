@@ -1,0 +1,136 @@
+---
+title: "Raport sprzedazowy: trendy, promocje, prognozy"
+subtitle: "Pakiet biztools - Poziom 3"
+author: "Zespol analityczny"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.width = 9, fig.height = 4.5, cache = TRUE)
+library(biztools)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r load}
+sales <- load_sales_data("train.csv", "stores.csv", "holidays_events.csv")
+clean <- clean_sales_ts(sales, key = c("store_nbr", "family"),
+                        na_action = "zero", dedup = "sum", fill_gaps = TRUE)
+monthly_total <- clean_sales_ts(sales, key = character(0),
+                                na_action = "zero", aggregate = "month")
+```
+
+# Streszczenie zarzadcze
+
+```{r exec-summary, echo=FALSE, results='asis'}
+mgmt <- create_management_summary(sales, recent_days = 90)
+cat(sprintf("- **Okres danych:** %s do %s\n", mgmt$period["from"], mgmt$period["to"]))
+cat(sprintf("- **Najlepszy sklep:** nr %s; **najgorszy:** nr %s\n",
+            mgmt$best_store, mgmt$worst_store))
+if (!is.null(mgmt$category_growth)) {
+  cg <- mgmt$category_growth
+  cat(sprintf("- **Najszybciej rosnaca kategoria:** %s (%.1f%%)\n",
+              cg$family[1], cg$growth_pct[1]))
+  cat(sprintf("- **Najwiekszy spadek:** %s (%.1f%%)\n",
+              cg$family[nrow(cg)], cg$growth_pct[nrow(cg)]))
+}
+if (!is.null(mgmt$promo_lift))
+  cat(sprintf("- **Efekt promocji (lift):** %.1f%%\n", mgmt$promo_lift$lift_pct))
+```
+
+# Jakosc danych
+
+```{r quality}
+report <- validate_sales_ts(sales)
+report$checks
+```
+
+Komentarz: ostrzezenie o spojnosci czestotliwosci wynika z faktu, ze sklepy sa
+zamkniete m.in. 25 grudnia kazdego roku - te dni brakuja w surowych danych i
+zostaly uzupelnione zerami w etapie czyszczenia.
+
+# Trendy sprzedazy
+
+```{r trend-total}
+plot_sales_trends(monthly_total, ma_window = 3,
+                  title = "Miesieczna sprzedaz calej firmy (ze srednia kroczaca)")
+```
+
+```{r trend-top-categories}
+metrics_family <- compute_sales_metrics(clean, by = "family")
+top5 <- metrics_family |> arrange(desc(total_sales)) |> head(5) |> pull(family)
+clean |>
+  filter(family %in% top5) |>
+  clean_sales_ts(key = "family", aggregate = "month") |>
+  plot_sales_trends(group = "family",
+                    title = "TOP 5 kategorii wg sprzedazy (miesiecznie)")
+```
+
+# Skutecznosc promocji
+
+```{r promo}
+metrics_family |>
+  arrange(desc(promo_share)) |>
+  select(family, total_sales, promo_share, promo_intensity, growth_pct) |>
+  head(10)
+```
+
+```{r promo-effect, results='asis'}
+if (!is.null(mgmt$promo_lift)) {
+  cat(sprintf("Srednia sprzedaz w okresach z promocja wynosi **%.0f**, a bez ",
+              mgmt$promo_lift$with_promo))
+  cat(sprintf("promocji **%.0f** - co odpowiada efektowi (lift) na poziomie **%.1f%%**.\n",
+              mgmt$promo_lift$without_promo, mgmt$promo_lift$lift_pct))
+}
+```
+
+# Porownanie sklepow i kategorii
+
+```{r store-ranking}
+metrics_store <- compute_sales_metrics(clean, by = "store_nbr")
+metrics_store |>
+  arrange(desc(total_sales)) |>
+  select(store_nbr, total_sales, mean_sales, cv_sales, growth_pct) |>
+  head(10)
+```
+
+```{r store-growth}
+mgmt$category_growth |> head(10)
+```
+
+# Prognozowanie
+
+Porownanie metod ARIMA i Prophet (lub ETS, jesli Prophet niedostepny) na
+zbiorze testowym (ostatnie 12 miesiecy).
+
+```{r forecast}
+fc <- create_prognosis(monthly_total, h = 12, test_h = 12)
+fc$accuracy
+fc$plot
+```
+
+```{r forecast-comment, results='asis'}
+if (!is.null(fc$accuracy)) {
+  best <- fc$accuracy$method[which.min(fc$accuracy$RMSE)]
+  cat(sprintf("Najnizszy blad RMSE osiaga model **%s** i to jego rekomendujemy ",
+              best))
+  cat("do planowania sprzedazy w horyzoncie rocznym.\n")
+}
+```
+
+# Wnioski i rekomendacje
+
+- Sprzedaz wykazuje wyrazny trend wzrostowy oraz sezonowosc roczna.
+- Promocje wiaza sie z wyzsza srednia sprzedaza - warto przetestowac ich ROI
+  na poziomie kategorii.
+- Sklepy roznia sie istotnie skala i zmiennoscia (CV) - sklepy o wysokim CV
+  wymagaja ostrozniejszego planowania zapasow.
+- Do prognoz operacyjnych rekomendowany jest model o najnizszym RMSE z sekcji
+  prognozowania.
