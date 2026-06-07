@@ -1,0 +1,40 @@
+Package: biztools
+Type: Package
+Title: Analiza Szeregow Czasowych Sprzedazy Detalicznej
+Version: 0.3.0
+Authors@R: c(
+    person("Paulina", "Cieslak", role = "aut"),
+    person("Aleksandra", "Rams", role = "aut"),
+    person("Katarzyna", "Szkiladz", role = c("aut", "cre"),
+           email = "kszkiladz@example.com"))
+Description: Pakiet dla wewnetrznego zespolu analitycznego firmy handlowej.
+    Umozliwia wczytanie surowych danych sprzedazowych, kontrole ich jakosci,
+    czyszczenie i agregacje, obliczanie kluczowych metryk biznesowych,
+    wizualizacje trendow, generowanie podsumowan dla menedzerow oraz
+    prognozowanie sprzedazy przy uzyciu modeli ARIMA i Prophet (z ETS jako
+    metoda awaryjna). Projekt zaliczeniowy z analizy szeregow czasowych w R.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.3.1
+Depends:
+    R (>= 4.1.0)
+Imports:
+    readr,
+    dplyr,
+    tidyr,
+    lubridate,
+    ggplot2,
+    rlang,
+    tibble,
+    zoo
+Suggests:
+    forecast,
+    prophet,
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+URL: https://github.com/kszkiladz/r_II_semestr_projekt_Cieslak_Rams_Szkiladz
+BugReports: https://github.com/kszkiladz/r_II_semestr_projekt_Cieslak_Rams_Szkiladz/issues

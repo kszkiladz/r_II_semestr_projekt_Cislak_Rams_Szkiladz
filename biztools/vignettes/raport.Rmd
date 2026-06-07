@@ -1,0 +1,185 @@
+---
+title: "Raport sprzedazowy - analiza szeregow czasowych (Poziom 3)"
+author: "Zespol Analityczny"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+params:
+  train_path: "train.csv"
+  stores_path: "stores.csv"
+  holidays_path: "holidays_events.csv"
+  stores: !r c(1, 3, 8, 44, 45, 47)
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 9, fig.height = 5)
+library(biztools)
+library(dplyr)
+library(ggplot2)
+```
+
+# Cel raportu
+
+Raport przekształca surowe dane sprzedażowe w wnioski biznesowe dla zarządu.
+Obejmuje: kontrolę jakości danych, analizę trendów, ocenę skuteczności promocji,
+porównanie sklepów i kategorii oraz **prognozę sprzedaży** dwiema metodami
+(ARIMA i Prophet). Wszystkie obliczenia wykonano pakietem `biztools`.
+
+# Wczytanie i przygotowanie danych
+
+```{r load}
+sales_raw <- load_sales_data(
+  train_path    = params$train_path,
+  stores_path   = params$stores_path,
+  holidays_path = params$holidays_path,
+  stores        = params$stores
+)
+
+validation <- validate_sales_ts(sales_raw, verbose = FALSE)
+```
+
+Wczytano **`r format(nrow(sales_raw), big.mark = " ")`** obserwacji dla
+`r length(unique(sales_raw$store_nbr))` sklepów i
+`r length(unique(sales_raw$family))` kategorii. Kontrola jakości wykazała:
+braki w sprzedaży = `r validation$n_missing_value`, wartości ujemne =
+`r validation$n_negative`, duplikaty = `r validation$n_duplicates`,
+częstotliwość = `r validation$frequency`.
+
+```{r clean}
+sales_clean  <- clean_sales_ts(sales_raw, na_strategy = "zero", sort = TRUE)
+sales_weekly <- clean_sales_ts(sales_raw, na_strategy = "zero",
+                               aggregate = "week")
+```
+
+# Trendy sprzedaży
+
+```{r trend-overall}
+plot_sales_trends(sales_weekly, smooth = TRUE,
+                  title = "Łączna sprzedaż tygodniowa (z linią trendu)")
+```
+
+```{r trend-store}
+plot_sales_trends(sales_weekly, color_by = "store_nbr",
+                  title = "Tygodniowy trend sprzedaży wg sklepu")
+```
+
+Wykres tygodniowy wygładza dzienny szum i ujawnia długookresowy kierunek oraz
+sezonowość. Agregacja tygodniowa jest też stabilniejszą podstawą prognozy.
+
+# Skuteczność promocji
+
+```{r promo}
+promo_summary <- sales_clean %>%
+  mutate(promo_flag = onpromotion > 0) %>%
+  group_by(promo_flag) %>%
+  summarise(srednia_sprzedaz = mean(sales, na.rm = TRUE),
+            liczba_obs       = dplyr::n(), .groups = "drop")
+knitr::kable(promo_summary, digits = 1,
+             caption = "Średnia sprzedaż: dni z promocją vs bez promocji")
+```
+
+```{r promo-uplift}
+uplift <- with(promo_summary,
+               srednia_sprzedaz[promo_flag] / srednia_sprzedaz[!promo_flag] - 1)
+```
+
+Średnia sprzedaż w obserwacjach objętych promocją jest
+**`r sprintf("%.1f%%", uplift * 100)`** wyższa niż bez promocji. To wstępny,
+korelacyjny sygnał skuteczności promocji — nie dowód przyczynowości (promocje
+często trafiają w produkty już dobrze rotujące; **potencjalny bias selekcji**).
+
+```{r promo-by-category}
+promo_cat <- sales_clean %>%
+  group_by(family) %>%
+  summarise(
+    sr_z_promo  = mean(sales[onpromotion > 0],  na.rm = TRUE),
+    sr_bez      = mean(sales[onpromotion == 0], na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(uplift_pct = (sr_z_promo / sr_bez - 1) * 100) %>%
+  arrange(desc(uplift_pct)) %>%
+  filter(is.finite(uplift_pct)) %>%
+  head(10)
+knitr::kable(promo_cat, digits = 1,
+             caption = "Top 10 kategorii wg wzrostu sprzedaży przy promocji")
+```
+
+# Porównanie sklepów i kategorii
+
+```{r metrics-store}
+metrics_store <- compute_sales_metrics(sales_clean, by = "store_nbr")
+knitr::kable(metrics_store, digits = 2,
+             caption = "Metryki biznesowe wg sklepu")
+plot_sales_metrics(metrics_store, metric = "total_sales", group_col = "store_nbr")
+```
+
+```{r metrics-category}
+metrics_cat <- compute_sales_metrics(sales_clean, by = "family")
+plot_sales_metrics(metrics_cat, metric = "total_sales",
+                   group_col = "family", top_n = 10,
+                   title = "Top 10 kategorii wg sprzedaży całkowitej")
+```
+
+Kolumna `cv_sales` (współczynnik zmienności) wskazuje, które jednostki są
+najbardziej nieprzewidywalne — istotne przy planowaniu zapasów i prognoz.
+
+# Funkcja wyższego rzędu w praktyce
+
+```{r hof}
+res_quito <- sales_ts_logic(
+  sales_clean, city = "Quito", date_from = "2016-01-01",
+  by = "store_nbr", metric = "growth_rate"
+)
+res_quito$metrics
+if (!is.null(res_quito$plot)) res_quito$plot
+```
+
+`sales_ts_logic()` oddziela logikę analityczną od mechanizmu wyboru danych:
+te same dane można analizować dowolną parą funkcji (metryki + wykres) na dowolnym
+podzbiorze metadanych i czasu.
+
+# Podsumowanie menedżerskie
+
+```{r mgmt}
+mgmt <- create_management_summary(sales_clean, recent_n = 30)
+mgmt
+```
+
+- Najlepszy sklep: **`r mgmt$best_store`**, najgorszy: **`r mgmt$worst_store`**.
+- Najszybciej rosnąca kategoria: **`r mgmt$fastest_growing_category`**.
+- Największy spadek (kategoria): **`r mgmt$biggest_decline_category`**.
+
+# Prognozowanie: ARIMA vs Prophet
+
+```{r forecast, eval = requireNamespace("forecast", quietly = TRUE)}
+prognosis <- create_prognosis(sales_weekly, h = 12, frequency = 52,
+                              methods = c("arima", "prophet"))
+plot_prognosis(prognosis)
+knitr::kable(head(prognosis$forecast, 12), digits = 0,
+             caption = "Prognoza sprzedaży na 12 tygodni (ARIMA vs Prophet)")
+```
+
+```{r forecast-fallback, eval = !requireNamespace("forecast", quietly = TRUE), echo=FALSE, results='asis'}
+cat("> Pakiet `forecast` nie jest zainstalowany — sekcja prognozy pominięta.",
+    "Zainstaluj `forecast` i `prophet`, aby wygenerować prognozy.")
+```
+
+# Wnioski i rekomendacje
+
+1. **Trend i sezonowość** — sprzedaż wykazuje wzrost i wyraźną sezonowość
+   tygodniową/roczną; planowanie zapasów powinno uwzględniać szczyty.
+2. **Promocje** — obserwowany wzrost sprzedaży przy promocji jest dodatni, ale
+   wymaga walidacji przyczynowej (test A/B lub model z grupą kontrolną), zanim
+   zostanie uznany za zwrot z inwestycji.
+3. **Sklepy/kategorie** — różnice w `total_sales` i `cv_sales` wskazują, gdzie
+   skoncentrować działania (sklepy o wysokiej zmienności = większe ryzyko
+   prognozy).
+4. **Prognoza** — ARIMA i Prophet warto porównywać równolegle: ARIMA zwykle
+   lepiej oddaje krótkoterminową dynamikę, Prophet — trend i sezonowość przy
+   dłuższych horyzontach. Wybór modelu produkcyjnego powinien opierać się na
+   walidacji kroczącej (rolling forecast) na danych historycznych.

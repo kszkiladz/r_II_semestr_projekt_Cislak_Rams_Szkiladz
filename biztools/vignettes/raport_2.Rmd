@@ -1,0 +1,90 @@
+---
+title: "Raport 2 - skutecznosc promocji i porownanie kategorii"
+author: "Cieslak, Rams, Szkiladz"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+params:
+  train_path: "train.csv"
+  stores_path: "stores.csv"
+  holidays_path: "holidays_events.csv"
+  stores: !r c(1, 3, 8, 44, 45, 47)
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 9, fig.height = 5)
+library(biztools)
+library(dplyr)
+library(ggplot2)
+```
+
+# Cel
+
+Raport pogłębia analizę **skuteczności promocji** oraz **porównanie kategorii
+produktów**. Stanowi uzupełnienie głównego raportu (`raport.Rmd`).
+
+# Dane
+
+```{r load}
+sales <- load_sales_data(params$train_path, params$stores_path,
+                         params$holidays_path, stores = params$stores)
+clean <- clean_sales_ts(sales, na_strategy = "zero")
+```
+
+# Skuteczność promocji wg kategorii
+
+```{r promo-cat}
+promo_cat <- clean %>%
+  group_by(family) %>%
+  summarise(
+    sr_z_promo = mean(sales[onpromotion > 0],  na.rm = TRUE),
+    sr_bez     = mean(sales[onpromotion == 0], na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(uplift_pct = (sr_z_promo / sr_bez - 1) * 100) %>%
+  filter(is.finite(uplift_pct)) %>%
+  arrange(desc(uplift_pct))
+
+knitr::kable(head(promo_cat, 15), digits = 1,
+             caption = "Kategorie wg wzrostu sprzedazy przy promocji (%)")
+```
+
+```{r promo-plot}
+ggplot(head(promo_cat, 15),
+       aes(x = stats::reorder(family, uplift_pct), y = uplift_pct)) +
+  geom_col(fill = "#2E75B6") +
+  coord_flip() +
+  labs(title = "Wzrost sprzedazy przy promocji wg kategorii",
+       x = "Kategoria", y = "Wzrost [%]") +
+  theme_minimal()
+```
+
+**Uwaga metodologiczna (potencjalny bias):** różnica to korelacja, nie dowód
+przyczynowości. Promocje często trafiają w kategorie już dobrze rotujące, co
+zawyża obserwowany efekt. Rzetelna ocena ROI promocji wymaga testu A/B lub
+modelu z grupą kontrolną.
+
+# Porównanie kategorii
+
+```{r metrics-cat}
+metrics_cat <- compute_sales_metrics(clean, by = "family")
+plot_sales_metrics(metrics_cat, metric = "total_sales",
+                   group_col = "family", top_n = 10,
+                   title = "Top 10 kategorii wg sprzedazy calkowitej")
+plot_sales_metrics(metrics_cat, metric = "cv_sales",
+                   group_col = "family", top_n = 10,
+                   title = "Top 10 kategorii wg zmiennosci (CV)")
+```
+
+Kategorie o wysokim `cv_sales` są najtrudniejsze do prognozowania — to one
+generują największe ryzyko przy planowaniu zapasów.
+
+# Wniosek
+
+Promocje wykazują dodatni, choć zróżnicowany wpływ na sprzedaż w zależności od
+kategorii. Decyzje o alokacji budżetu promocyjnego powinny uwzględniać zarówno
+obserwowany wzrost, jak i zmienność danej kategorii.
