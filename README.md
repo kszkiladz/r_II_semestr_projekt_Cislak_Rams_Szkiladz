@@ -116,4 +116,4 @@ The package supports:
 
 ## Author
 
-Created as a university project for time series analysis in R by Paulina Ciślak, Aleksandra Rams, and Katarzyna Szkiłądź.
+Created as a university project for time series analysis in R by Paulina Cieślak, Aleksandra Rams, and Katarzyna Szkiłądź.
